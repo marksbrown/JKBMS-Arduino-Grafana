@@ -53,6 +53,17 @@ void setup() {
 }
 
 void loop() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi lost — reconnecting...");
+        WiFi.disconnect();
+        while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+            Serial.println("Retrying WiFi...");
+            delay(5000);
+        }
+        Serial.println("WiFi reconnected");
+    }
+
+    bms.clearData(); // age out previous read so stale data is never re-inserted
     bms.update();
 
     if (bms.isDataValid()) {

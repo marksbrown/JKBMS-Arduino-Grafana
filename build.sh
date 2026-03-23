@@ -63,7 +63,7 @@ if [ ! -d "$JKBMS_DEST" ]; then
     cp -r JKBMSInterface "$JKBMS_DEST"
 else
     info "JKBMSInterface already installed — syncing from local copy..."
-    cp -r JKBMSInterface/. "$JKBMS_DEST/"
+    rsync -a --exclude='.git' JKBMSInterface/. "$JKBMS_DEST/"
 fi
 
 # ── 6. Compile ─────────────────────────────────────────────────────────────

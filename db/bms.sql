@@ -18,6 +18,7 @@ CREATE TABLE `bms` (
   `discharging_enabled` bool DEFAULT NULL,
   `ischarging` bool DEFAULT NULL,
   `isdischarging` bool DEFAULT NULL,
+  `onewire_temp` double DEFAULT NULL,
   PRIMARY KEY (`date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;

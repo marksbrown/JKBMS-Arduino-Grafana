@@ -12,8 +12,16 @@
 #include <ArduinoHttpClient.h>
 #include <ArduinoJson.h>
 #include <JKBMSInterface.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 #include "arduino_secrets.h"
+
+// OneWire temperature sensor (DS18B20) on GPIO 4
+// Power: 5V (red), Ground (blue), Data: GPIO 4 (yellow)
+#define ONE_WIRE_BUS 4
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature tempSensor(&oneWire);
 
 // WiFi auth
 char ssid[] = SECRET_SSID;
@@ -50,6 +58,8 @@ void setup() {
     // Initialize BMS communication
     Serial1.begin(115200, SERIAL_8N1);
     bms.begin(115200);
+
+    tempSensor.begin();
 }
 
 void loop() {
@@ -65,6 +75,10 @@ void loop() {
 
     bms.clearData(); // age out previous read so stale data is never re-inserted
     bms.update();
+
+    tempSensor.requestTemperatures();
+    delay(750); // DS18B20 conversion time
+    float oneWireTempC = tempSensor.getTempCByIndex(0);
 
     if (bms.isDataValid()) {
 
@@ -106,7 +120,7 @@ void loop() {
         sql += "(date,voltage,current,soc,cycles,power_temp,battery_temp,";
         sql += "cell0_voltage,cell1_voltage,cell2_voltage,cell3_voltage,";
         sql += "cell_voltage_delta,charging_enabled,discharging_enabled,";
-        sql += "ischarging,isdischarging) VALUES (CURRENT_TIMESTAMP,";
+        sql += "ischarging,isdischarging,onewire_temp) VALUES (CURRENT_TIMESTAMP,";
         sql += String(bms.getVoltage(), 3)          + ",";
         sql += String(bms.getCurrent(), 3)           + ",";
         sql += String(bms.getSOC())                  + ",";
@@ -121,7 +135,8 @@ void loop() {
         sql += String(bms.isChargingEnabled())       + ",";
         sql += String(bms.isDischargingEnabled())    + ",";
         sql += String(bms.isCharging())              + ",";
-        sql += String(bms.isDischarging())           + ");";
+        sql += String(bms.isDischarging())           + ",";
+        sql += String(oneWireTempC, 2)               + ");";
 
         JsonDocument insertRequest;
         insertRequest["sql"] = sql;

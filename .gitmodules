@@ -1,0 +1,3 @@
+[submodule "JKBMSInterface"]
+	path = JKBMSInterface
+	url = git@github.com:chrissank/JKBMSInterface.git

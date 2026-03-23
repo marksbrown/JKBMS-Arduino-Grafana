@@ -1,150 +1,162 @@
 // Dan Cottam 2025
 //
-// WiFi stuff 
-// https://docs.arduino.cc/tutorials/uno-r4-wifi/wifi-examples/ 
+// WiFi stuff:
+// https://docs.arduino.cc/tutorials/uno-r4-wifi/wifi-examples/
 //
-// BMS Library
+// BMS Library:
 // https://github.com/chrissank/JKBMSInterface
 
-// Wifi and HTTP, so we can send data
 #include <WiFiS3.h>
-#include "WiFiSSLClient.h"
-#include "IPAddress.h"
+#include <WiFiSSLClient.h>
+#include <IPAddress.h>
 #include <ArduinoHttpClient.h>
+#include <ArduinoJson.h>
+#include <JKBMSInterface.h>
 
 #include "arduino_secrets.h"
-///////please enter your sensitive data in the Secret tab/arduino_secrets.h
 
 // WiFi auth
-char ssid[] = SECRET_SSID;        // your network SSID (name)
-char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
-byte wifistatus = 0;     // the WiFi radio's status
+char ssid[] = SECRET_SSID;
+char pass[] = SECRET_PASS;
+byte wifiStatus = 0;
 
 // HTTP settings
-char server[] = "dancottam.nl";
-int port = 443;
-String HTTPUSER = SECRET_HTTPUSER;
-String HTTPAUTH = SECRET_HTTPAUTH;
-String path = "/projects/jkbms/api/v1/sql"; // API endpoint for inserting data
+char server[]   = "dancottam.nl";
+int port        = 443;
+String httpUser = SECRET_HTTPUSER;
+String httpAuth = SECRET_HTTPAUTH;
+String apiPath  = "/projects/jkbms/api/v1/sql";
 WiFiSSLClient wifi;
 HttpClient client = HttpClient(wifi, server, port);
 
-// BMS
-#include <JKBMSInterface.h>
-// Create BMS instance using Serial1 (specific to which Arduino you're on. Just Serial is the USB on my Uno R4)
+// BMS - Serial1 is the UART port on Uno R4 (Serial is USB)
 JKBMSInterface bms(&Serial1);
-
-// So we can communicate with the MaxScale API in JSON
-#include <ArduinoJson.h>
-String DBTARGET   = SECRET_DBTARGET;
-String DB         = SECRET_DB;
-String DBTABLE    = SECRET_DBTABLE;
-String DBUSER     = SECRET_DBUSER;
-String DBPASS     = SECRET_DBPASS;
 
 void setup() {
     Serial.begin(115200);
     Serial.println("Starting up");
 
-    // attempt to connect to WiFi network:
-    while (wifistatus != WL_CONNECTED) {
+    while (wifiStatus != WL_CONNECTED) {
         Serial.print("Attempting to connect to WPA SSID: ");
         Serial.println(ssid);
-        // Connect to WPA/WPA2 network:
-        wifistatus = WiFi.begin(ssid, pass);
-
-        // wait 10 seconds for connection:
+        wifiStatus = WiFi.begin(ssid, pass);
         delay(10000);
     }
 
-    // print your boards IP address:
     IPAddress ip = WiFi.localIP();
     Serial.print("IP Address: ");
     Serial.println(ip);
 
-    // Initialize BMS communication (UART ports 0 and 1 on Uno R4)
+    // Initialize BMS communication
     Serial1.begin(115200, SERIAL_8N1);
     bms.begin(115200);
 }
 
 void loop() {
-    // Update BMS data (call this regularly)
     bms.update();
 
-    // Check if we have valid data
     if (bms.isDataValid()) {
 
-        // Create body data for connection token POST request
-        JsonDocument TokenRequest;
-        TokenRequest["user"] =          SECRET_DBUSER;
-        TokenRequest["password"] =      SECRET_DBPASS;
-        TokenRequest["target"] =        SECRET_DBTARGET;
-        TokenRequest["db"] =            SECRET_DB;
+        // Build and send token request
+        JsonDocument tokenRequest;
+        tokenRequest["user"]     = SECRET_DBUSER;
+        tokenRequest["password"] = SECRET_DBPASS;
+        tokenRequest["target"]   = SECRET_DBTARGET;
+        tokenRequest["db"]       = SECRET_DB;
         String jsonTokenRequest;
-        serializeJson(TokenRequest, jsonTokenRequest);
+        serializeJson(tokenRequest, jsonTokenRequest);
 
-        // Send request to create SQL session and get tokens
         client.beginRequest();
-        client.post(path);
-        client.sendBasicAuth(HTTPUSER, HTTPAUTH); // send the username and password for authentication
-        client.sendHeader("Content-Type", "application/x-www-form-urlencoded");
+        client.post(apiPath);
+        client.sendBasicAuth(httpUser, httpAuth);
+        client.sendHeader("Content-Type", "application/json");
         client.sendHeader("Content-Length", jsonTokenRequest.length());
         client.beginBody();
         client.print(jsonTokenRequest);
         client.endRequest();
 
-        // Pull out id and token from request
-        String jsonResponse = client.responseBody();
-        JsonDocument Response;
-        deserializeJson(Response, jsonResponse);
-        String ConnectionID = Response["data"]["id"];
-        String ConnectionToken = Response["meta"]["token"];
+        // Parse connection ID and token from response
+        String jsonTokenResponse = client.responseBody();
+        JsonDocument tokenResponse;
+        DeserializationError err = deserializeJson(tokenResponse, jsonTokenResponse);
+        if (err) {
+            Serial.print("Failed to parse token response: ");
+            Serial.println(err.c_str());
+            delay(5000);
+            return;
+        }
 
-        // Create body data for data POST request
-        JsonDocument InsertRequest;
-        InsertRequest["sql"] = "INSERT INTO " + String(SECRET_DBTABLE) + "(date,voltage,current,soc,cycles,power_temp,battery_temp,cell0_voltage,cell1_voltage,cell2_voltage,cell3_voltage,cell_voltage_delta,charging_enabled,discharging_enabled,ischarging,isdischarging) VALUES (CURRENT_TIMESTAMP," + String(bms.getVoltage(), 3) + "," + String(bms.getCurrent(), 3) + "," + String(bms.getSOC()) + "," + String(bms.getCycles()) + "," + String(bms.getPowerTemp(), 2) + "," + String(bms.getBatteryTemp(), 2) + "," + String(bms.getCellVoltage(0), 3) + "," + String(bms.getCellVoltage(1), 3) + "," + String(bms.getCellVoltage(2), 3) + "," + String(bms.getCellVoltage(3), 3) + "," + String(bms.getCellVoltageDelta(), 3) + "," + String(bms.isChargingEnabled()) + "," + String(bms.isDischargingEnabled()) + "," + String(bms.isCharging()) + "," + String(bms.isDischarging()) + ");";
+        String connectionID    = tokenResponse["data"]["id"].as<String>();
+        String connectionToken = tokenResponse["meta"]["token"].as<String>();
+
+        // Build SQL INSERT
+        String sql = "INSERT INTO ";
+        sql += SECRET_DBTABLE;
+        sql += "(date,voltage,current,soc,cycles,power_temp,battery_temp,";
+        sql += "cell0_voltage,cell1_voltage,cell2_voltage,cell3_voltage,";
+        sql += "cell_voltage_delta,charging_enabled,discharging_enabled,";
+        sql += "ischarging,isdischarging) VALUES (CURRENT_TIMESTAMP,";
+        sql += String(bms.getVoltage(), 3)          + ",";
+        sql += String(bms.getCurrent(), 3)           + ",";
+        sql += String(bms.getSOC())                  + ",";
+        sql += String(bms.getCycles())               + ",";
+        sql += String(bms.getPowerTemp(), 2)         + ",";
+        sql += String(bms.getBatteryTemp(), 2)       + ",";
+        sql += String(bms.getCellVoltage(0), 3)      + ",";
+        sql += String(bms.getCellVoltage(1), 3)      + ",";
+        sql += String(bms.getCellVoltage(2), 3)      + ",";
+        sql += String(bms.getCellVoltage(3), 3)      + ",";
+        sql += String(bms.getCellVoltageDelta(), 3)  + ",";
+        sql += String(bms.isChargingEnabled())       + ",";
+        sql += String(bms.isDischargingEnabled())    + ",";
+        sql += String(bms.isCharging())              + ",";
+        sql += String(bms.isDischarging())           + ");";
+
+        JsonDocument insertRequest;
+        insertRequest["sql"] = sql;
         String jsonInsertRequest;
-        serializeJson(InsertRequest, jsonInsertRequest);
+        serializeJson(insertRequest, jsonInsertRequest);
 
-        //Wait 2 seconds
         delay(2000);
-
         Serial.println(jsonInsertRequest);
-        // Send request to insert data
+
+        // Send INSERT request
         client.beginRequest();
-        client.post(path + "/" + ConnectionID + "/queries?token=" + ConnectionToken);
-        client.sendBasicAuth(HTTPUSER, HTTPAUTH); // send the username and password for authentication
-        client.sendHeader("Content-Type", "application/x-www-form-urlencoded");
+        client.post(apiPath + "/" + connectionID + "/queries?token=" + connectionToken);
+        client.sendBasicAuth(httpUser, httpAuth);
+        client.sendHeader("Content-Type", "application/json");
         client.sendHeader("Content-Length", jsonInsertRequest.length());
         client.beginBody();
         client.print(jsonInsertRequest);
         client.endRequest();
 
-        // read the status code and body of the response
-        int statusCode = client.responseStatusCode();
-        String response = client.responseBody();
+        int insertStatus = client.responseStatusCode();
+        String insertResponse = client.responseBody();
+        if (insertStatus < 200 || insertStatus >= 300) {
+            Serial.print("Insert failed, status: ");
+            Serial.println(insertStatus);
+            Serial.println(insertResponse);
+        }
 
-        //Wait 2 seconds
         delay(2000);
 
-        //End SQL session by deleting it from the server
+        // Close SQL session
         client.beginRequest();
-        client.del(path + "/" + ConnectionID + "?token=" + ConnectionToken);
-        client.sendBasicAuth(HTTPUSER, HTTPAUTH); // send the username and password for authentication
+        client.del(apiPath + "/" + connectionID + "?token=" + connectionToken);
+        client.sendBasicAuth(httpUser, httpAuth);
         client.endRequest();
 
-        // read the status code and body of the response
-        int delstatusCode = client.responseStatusCode();
-        String delresponse = client.responseBody();
+        int delStatus = client.responseStatusCode();
+        client.responseBody(); // consume response to release connection
+        if (delStatus < 200 || delStatus >= 300) {
+            Serial.print("Session delete failed, status: ");
+            Serial.println(delStatus);
+        }
 
-        //Wait 5 minutes
         delay(300000);
 
-    }
-    else {
+    } else {
         Serial.println("Waiting for BMS data...");
+        delay(5000);
     }
-
-    //Wait 5 seconds
-    delay(5000);
 }

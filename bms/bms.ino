@@ -29,11 +29,11 @@ char pass[] = SECRET_PASS;
 byte wifiStatus = 0;
 
 // HTTP settings
-char server[]   = "dancottam.nl";
+char server[]   = SECRET_SERVER;
 int port        = 443;
 String httpUser = SECRET_HTTPUSER;
 String httpAuth = SECRET_HTTPAUTH;
-String apiPath  = "/projects/jkbms/api/v1/sql";
+String apiPath  = SECRET_APIPATH;
 WiFiSSLClient wifi;
 HttpClient client = HttpClient(wifi, server, port);
 
